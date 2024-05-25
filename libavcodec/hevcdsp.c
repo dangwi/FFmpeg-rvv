@@ -269,5 +269,7 @@ int i = 0;
     ff_hevc_dsp_init_mips(hevcdsp, bit_depth);
 #elif ARCH_LOONGARCH
     ff_hevc_dsp_init_loongarch(hevcdsp, bit_depth);
+#elif ARCH_RISCV
+    ff_hevc_dsp_init_riscv(hevcdsp, bit_depth);
 #endif
 }
