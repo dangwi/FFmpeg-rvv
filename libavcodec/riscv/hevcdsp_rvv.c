@@ -93,28 +93,109 @@ static const int8_t transform[32][32] = {
 #define SET(dst, x)   (dst) = (x)
 #define SCALE(dst, x) (dst) = av_clip_int16(((x) + add) >> shift)
 
+static const int16_t trans4x4[16] = {
+    64,  64,  64,  64,
+    83,  36, -36, -83,
+    64, -64, -64,  64,
+    36, -83,  83, -36
+};
+
+static const int16_t trans4x4odd[16] = {
+    89,  75,  50,  18,
+    75, -18, -89, -50,
+    50, -89,  18,  75,
+    18, -50,  75, -89
+};
+
+/*
 #define TR_4(dst, src, dstep, sstep, assign, end)                 \
     do {                                                          \
-        const int e0 = 64 * src[0 * sstep] + 64 * src[2 * sstep]; \
-        const int e1 = 64 * src[0 * sstep] - 64 * src[2 * sstep]; \
-        const int o0 = 83 * src[1 * sstep] + 36 * src[3 * sstep]; \
-        const int o1 = 36 * src[1 * sstep] - 83 * src[3 * sstep]; \
+        int vl;                                                   \
+        vint16m1_t vcoe16;                                        \
+        vint32m2_t vo32;                                          \
+        vl = vsetvl_e16m1(4);                                     \
+        vo32 = vmv_v_x_i32m2(0, vl);                              \
+        vcoe16 = vle16_v_i16m1(&trans4x4[0], vl);                 \
+        vo32 = vwmacc_vx_i32m2(vo32, src[0 * sstep], vcoe16, vl);         \
+        vcoe16 = vle16_v_i16m1(&trans4x4[4], vl);                 \
+        vo32 = vwmacc_vx_i32m2(vo32, src[1 * sstep], vcoe16, vl);         \
+        vcoe16 = vle16_v_i16m1(&trans4x4[8], vl);                 \
+        vo32 = vwmacc_vx_i32m2(vo32, src[2 * sstep], vcoe16, vl);         \
+        vcoe16 = vle16_v_i16m1(&trans4x4[12], vl);                \
+        vo32 = vwmacc_vx_i32m2(vo32, src[3 * sstep], vcoe16, vl);         \
+        vse32_v_i32m2(&dst[0], vo32, vl);                         \
+    } while (0)
+*/
+
+#define TR_8_bak(dst, src, dstep, sstep, assign, end)                 \
+    do {                                                          \
+        int i, j;                                                 \
+        int e_8[4];                                               \
+        int o_8[4];                                               \
+        int vl;                                                   \
+        vint8m1_t  vtrans8;                                       \
+        vint16m2_t vtrans16;                                      \
+        vint32m4_t vo32;                                          \
+        vl = vsetvl_e32m4(4);                                     \
+        vo32 = vmv_v_x_i32m4(0, vl);                              \
+        for (j = 1; j < end; j += 2) {                            \
+            vtrans8  = vle8_v_i8m1(&transform[4 * j][0], vl);     \
+            vtrans16 = vwadd_vx_i16m2(vtrans8, 0, vl);            \
+            vo32 = vwmacc_vx_i32m4(vo32, src[j * sstep], vtrans16, vl); \
+        }                                                         \
+        vse32_v_i32m4(&o_8[0], vo32, vl);                         \
                                                                   \
-        assign(dst[0 * dstep], e0 + o0);                          \
-        assign(dst[1 * dstep], e1 + o1);                          \
-        assign(dst[2 * dstep], e1 - o1);                          \
-        assign(dst[3 * dstep], e0 - o0);                          \
+        vint16m1_t vcoe16;                                        \
+        vint32m2_t vo32m2;                                        \
+        vl = vsetvl_e16m1(4);                                     \
+        vo32m2 = vmv_v_x_i32m2(0, vl);                              \
+        vcoe16 = vle16_v_i16m1(&trans4x4[0], vl);                   \
+        vo32m2 = vwmacc_vx_i32m2(vo32m2, src[0 * 2 * sstep], vcoe16, vl);         \
+        vcoe16 = vle16_v_i16m1(&trans4x4[4], vl);           \
+        vo32m2 = vwmacc_vx_i32m2(vo32m2, src[1 * 2 * sstep], vcoe16, vl);         \
+        vcoe16 = vle16_v_i16m1(&trans4x4[8], vl);           \
+        vo32m2 = vwmacc_vx_i32m2(vo32m2, src[2 * 2 * sstep], vcoe16, vl);         \
+        vcoe16 = vle16_v_i16m1(&trans4x4[12], vl);           \
+        vo32m2 = vwmacc_vx_i32m2(vo32m2, src[3 * 2 * sstep], vcoe16, vl);         \
+        vse32_v_i32m2(e_8, vo32m2, vl);                         \
+                                                                  \
+        for (i = 0; i < 4; i++) {                                 \
+            assign(dst[i * dstep], e_8[i] + o_8[i]);              \
+            assign(dst[(7 - i) * dstep], e_8[i] - o_8[i]);        \
+        }                                                         \
     } while (0)
 
 #define TR_8(dst, src, dstep, sstep, assign, end)                 \
     do {                                                          \
         int i, j;                                                 \
         int e_8[4];                                               \
-        int o_8[4] = { 0 };                                       \
-        for (i = 0; i < 4; i++)                                   \
-            for (j = 1; j < end; j += 2)                          \
-                o_8[i] += transform[4 * j][i] * src[j * sstep];   \
-        TR_4(e_8, src, 1, 2 * sstep, SET, 4);                     \
+        int o_8[4];                                               \
+        int vl;                                                   \
+        vint16m1_t vtrans16, vout16;                              \
+        vint32m2_t ve32, vo32;                                    \
+        vl = vsetvl_e32m2(4);                                     \
+        vo32 = vmv_v_x_i32m2(0, vl);                              \
+        vtrans16 = vle16_v_i16m1(&trans4x4odd[0], vl);            \
+        vo32 = vwmacc_vx_i32m2(vo32, src[1 * sstep], vtrans16, vl); \
+        vtrans16 = vle16_v_i16m1(&trans4x4odd[4], vl);            \
+        vo32 = vwmacc_vx_i32m2(vo32, src[3 * sstep], vtrans16, vl); \
+        vtrans16 = vle16_v_i16m1(&trans4x4odd[8], vl);            \
+        vo32 = vwmacc_vx_i32m2(vo32, src[5 * sstep], vtrans16, vl); \
+        vtrans16 = vle16_v_i16m1(&trans4x4odd[12], vl);           \
+        vo32 = vwmacc_vx_i32m2(vo32, src[7 * sstep], vtrans16, vl); \
+                                                                  \
+        ve32 = vmv_v_x_i32m2(0, vl);                              \
+        vtrans16 = vle16_v_i16m1(&trans4x4[0], vl);               \
+        ve32 = vwmacc_vx_i32m2(ve32, src[0 * sstep], vtrans16, vl); \
+        vtrans16 = vle16_v_i16m1(&trans4x4[4], vl);               \
+        ve32 = vwmacc_vx_i32m2(ve32, src[2 * sstep], vtrans16, vl); \
+        vtrans16 = vle16_v_i16m1(&trans4x4[8], vl);               \
+        ve32 = vwmacc_vx_i32m2(ve32, src[4 * sstep], vtrans16, vl); \
+        vtrans16 = vle16_v_i16m1(&trans4x4[12], vl);              \
+        ve32 = vwmacc_vx_i32m2(ve32, src[6 * sstep], vtrans16, vl); \
+                                                                  \
+        vse32_v_i32m2(o_8, vo32, vl);                             \
+        vse32_v_i32m2(e_8, ve32, vl);                             \
                                                                   \
         for (i = 0; i < 4; i++) {                                 \
             assign(dst[i * dstep], e_8[i] + o_8[i]);              \
@@ -126,10 +207,19 @@ static const int8_t transform[32][32] = {
     do {                                                          \
         int i, j;                                                 \
         int e_16[8];                                              \
-        int o_16[8] = { 0 };                                      \
-        for (i = 0; i < 8; i++)                                   \
-            for (j = 1; j < end; j += 2)                          \
-                o_16[i] += transform[2 * j][i] * src[j * sstep];  \
+        int o_16[8];                                              \
+        int vl;                                                   \
+        vint8m1_t  vtrans8;                                       \
+        vint16m2_t vtrans16;                                      \
+        vint32m4_t vo32;                                          \
+        vl = vsetvl_e32m4(8);                                     \
+        vo32 = vmv_v_x_i32m4(0, vl);                              \
+        for (j = 1; j < end; j += 2) {                            \
+            vtrans8  = vle8_v_i8m1(&transform[2 * j][0], vl);     \
+            vtrans16 = vwadd_vx_i16m2(vtrans8, 0, vl);            \
+            vo32 = vwmacc_vx_i32m4(vo32, src[j * sstep], vtrans16, vl); \
+        }                                                         \
+        vse32_v_i32m4(o_16, vo32, vl);                            \
         TR_8(e_16, src, 1, 2 * sstep, SET, 8);                    \
                                                                   \
         for (i = 0; i < 8; i++) {                                 \
@@ -142,10 +232,19 @@ static const int8_t transform[32][32] = {
     do {                                                          \
         int i, j;                                                 \
         int e_32[16];                                             \
-        int o_32[16] = { 0 };                                     \
-        for (i = 0; i < 16; i++)                                  \
-            for (j = 1; j < end; j += 2)                          \
-                o_32[i] += transform[j][i] * src[j * sstep];      \
+        int o_32[16];                                             \
+        int vl;                                                   \
+        vint8m1_t  vtrans8;                                       \
+        vint16m2_t vtrans16;                                      \
+        vint32m4_t vo32;                                          \
+        vl = vsetvl_e32m4(16);                                    \
+        vo32 = vmv_v_x_i32m4(0, vl);                              \
+        for (j = 1; j < end; j += 2) {                            \
+            vtrans8  = vle8_v_i8m1(&transform[j][0], vl);         \
+            vtrans16 = vwadd_vx_i16m2(vtrans8, 0, vl);            \
+            vo32 = vwmacc_vx_i32m4(vo32, src[j * sstep], vtrans16, vl); \
+        }                                                         \
+        vse32_v_i32m4(o_32, vo32, vl);                            \
         TR_16(e_32, src, 1, 2 * sstep, SET, end / 2);             \
                                                                   \
         for (i = 0; i < 16; i++) {                                \
@@ -154,8 +253,6 @@ static const int8_t transform[32][32] = {
         }                                                         \
     } while (0)
 
-#define IDCT_VAR4(H)                                              \
-    int limit2 = FFMIN(col_limit + 4, H)
 #define IDCT_VAR8(H)                                              \
     int limit  = FFMIN(col_limit, H);                             \
     int limit2 = FFMIN(col_limit + 4, H)
@@ -187,8 +284,146 @@ void ff_hevc_idct_ ## H ## x ## H ## _rvv(int16_t *coeffs,        \
     }                                                             \
 }
 
-IDCT( 4)
-IDCT( 8)
+void ff_hevc_idct_4x4_rvv(int16_t *coeffs, int col_limit)
+{
+    int vl;
+    vint16m1_t vcoe16, vo16;
+    vint32m2_t vo32v0, vo32v1, vo32v2, vo32v3;
+    vint16m1_t vo16c0, vo16c1, vo16c2, vo16c3;
+
+    vl = vsetvl_e16m1(4);
+    vo32v0 = vmv_v_x_i32m2(0, vl);
+    vo32v1 = vmv_v_x_i32m2(0, vl);
+    vo32v2 = vmv_v_x_i32m2(0, vl);
+    vo32v3 = vmv_v_x_i32m2(0, vl);
+
+#define MACC1x4(line)                                                   \
+    vcoe16 = vle16_v_i16m1(&trans4x4[line * 4], vl);                    \
+    vo32v0 = vwmacc_vx_i32m2(vo32v0, coeffs[line * 4 + 0], vcoe16, vl); \
+    vo32v1 = vwmacc_vx_i32m2(vo32v1, coeffs[line * 4 + 1], vcoe16, vl); \
+    vo32v2 = vwmacc_vx_i32m2(vo32v2, coeffs[line * 4 + 2], vcoe16, vl); \
+    vo32v3 = vwmacc_vx_i32m2(vo32v3, coeffs[line * 4 + 3], vcoe16, vl);
+
+    MACC1x4(0)
+    MACC1x4(1)
+    MACC1x4(2)
+    MACC1x4(3)
+
+    vo16c0 = vnclip_wx_i16m1(vo32v0, 7, vl);
+    vo16c1 = vnclip_wx_i16m1(vo32v1, 7, vl);
+    vo16c2 = vnclip_wx_i16m1(vo32v2, 7, vl);
+    vo16c3 = vnclip_wx_i16m1(vo32v3, 7, vl);
+
+    vo32v0 = vmv_v_x_i32m2(0, vl);
+    vo32v1 = vmv_v_x_i32m2(0, vl);
+    vo32v2 = vmv_v_x_i32m2(0, vl);
+    vo32v3 = vmv_v_x_i32m2(0, vl);
+
+#define MACC4x1(col)                                                         \
+    vo32v0 = vwmacc_vx_i32m2(vo32v0, trans4x4[col * 4 + 0], vo16c##col, vl); \
+    vo32v1 = vwmacc_vx_i32m2(vo32v1, trans4x4[col * 4 + 1], vo16c##col, vl); \
+    vo32v2 = vwmacc_vx_i32m2(vo32v2, trans4x4[col * 4 + 2], vo16c##col, vl); \
+    vo32v3 = vwmacc_vx_i32m2(vo32v3, trans4x4[col * 4 + 3], vo16c##col, vl);
+
+    MACC4x1(0)
+    MACC4x1(1)
+    MACC4x1(2)
+    MACC4x1(3)
+
+    vo16   = vnclip_wx_i16m1(vo32v0, 12, vl);
+    vsse16_v_i16m1(&coeffs[0], 2 * 4, vo16, vl);
+    vo16   = vnclip_wx_i16m1(vo32v1, 12, vl);
+    vsse16_v_i16m1(&coeffs[1], 2 * 4, vo16, vl);
+    vo16   = vnclip_wx_i16m1(vo32v2, 12, vl);
+    vsse16_v_i16m1(&coeffs[2], 2 * 4, vo16, vl);
+    vo16   = vnclip_wx_i16m1(vo32v3, 12, vl);
+    vsse16_v_i16m1(&coeffs[3], 2 * 4, vo16, vl);
+
+/*
+    int vl;
+    vint16m1_t vrow16;
+    vint32m2_t vo32v0, vo32v1, vo32v2, vo32v3;
+    vint16m1_t vo16;
+
+    vl = vsetvl_e16m1(4);
+    vo32v0 = vmv_v_x_i32m2(0, vl);
+    vo32v1 = vmv_v_x_i32m2(0, vl);
+    vo32v2 = vmv_v_x_i32m2(0, vl);
+    vo32v3 = vmv_v_x_i32m2(0, vl);
+
+#define MACC1x4(line)                                                \
+    vrow16 = vle16_v_i16m1(&src[line * 4], vl);                   \
+    vo32v0 = vwmacc_vx_i32m2(vo32v0, trans4x4[line * 4 + 0], vrow16, vl); \
+    vo32v1 = vwmacc_vx_i32m2(vo32v1, trans4x4[line * 4 + 1], vrow16, vl); \
+    vo32v2 = vwmacc_vx_i32m2(vo32v2, trans4x4[line * 4 + 2], vrow16, vl); \
+    vo32v3 = vwmacc_vx_i32m2(vo32v3, trans4x4[line * 4 + 3], vrow16, vl);
+
+    MACC1x4(0)
+    MACC1x4(1)
+    MACC1x4(2)
+    MACC1x4(3)
+
+    vo16   = vnclip_wx_i16m1(vo32v0, 7, vl);
+    vse16_v_i16m1(&src[0], vo16, vl);
+
+    vo16   = vnclip_wx_i16m1(vo32v1, 7, vl);
+    vse16_v_i16m1(&src[4], vo16, vl);
+
+    vo16   = vnclip_wx_i16m1(vo32v2, 7, vl);
+    vse16_v_i16m1(&src[8], vo16, vl);
+
+    vo16   = vnclip_wx_i16m1(vo32v3, 7, vl);
+    vse16_v_i16m1(&src[12], vo16, vl);
+*/
+}
+
+void ff_hevc_idct_8x8_rvv(int16_t *coeffs, int col_limit)
+{
+    int i;
+    int      shift = 7;
+    int      add   = 1 << (shift - 1);
+    int16_t *src   = coeffs;
+    int limit  = FFMIN(col_limit, 8);
+    int limit2 = FFMIN(col_limit + 4, 8);
+
+    for (i = 0; i < 8; i++) {
+        TR_8_bak(src, src, 8, 8, SCALE, limit2);
+        if (limit2 < 8 && i%4 == 0 && !!i)
+            limit2 -= 4;
+        src++;
+    }
+
+    shift = 12; /* 20 - BIT_DEPTH */
+    add   = 1 << (shift - 1);
+    for (i = 0; i < 8; i++) {
+        TR_8_bak(coeffs, coeffs, 1, 1, SCALE, limit);
+        coeffs += 8;
+    }
+}
+
+/*
+    int i;
+    int      shift = 7;
+    int      add   = 1 << (shift - 1);
+    int16_t *src   = coeffs;
+    IDCT_VAR##H(H);
+
+    for (i = 0; i < H; i++) {
+        TR_ ## H(src, src, H, H, SCALE, limit2);
+        if (limit2 < H && i%4 == 0 && !!i)
+            limit2 -= 4;
+        src++;
+    }
+
+    shift = 12;
+    add   = 1 << (shift - 1);
+    for (i = 0; i < H; i++) {
+        TR_ ## H(coeffs, coeffs, 1, 1, SCALE, limit);
+        coeffs += H;
+    }
+*/
+
+// IDCT( 8)
 IDCT(16)
 IDCT(32)
 
