@@ -28,4 +28,15 @@ void ff_hevc_idct_8x8_rvv(int16_t *coeffs, int col_limit);
 void ff_hevc_idct_16x16_rvv(int16_t *coeffs, int col_limit);
 void ff_hevc_idct_32x32_rvv(int16_t *coeffs, int col_limit);
 
+void put_hevc_pel_uni_pixels_rvv(uint8_t *_dst, ptrdiff_t _dststride, 
+                                 uint8_t *_src, ptrdiff_t _srcstride,
+                                 int height, intptr_t mx, intptr_t my, int width);
+
+void put_hevc_qpel_uni_hv_rvv(uint8_t *_dst,  ptrdiff_t _dststride,
+                              uint8_t *_src, ptrdiff_t _srcstride,
+                              int height, intptr_t mx, intptr_t my, int width);
+void put_hevc_epel_uni_hv_rvv(uint8_t *_dst, ptrdiff_t _dststride, 
+                              uint8_t *_src, ptrdiff_t _srcstride,
+                              int height, intptr_t mx, intptr_t my, int width);
+
 #endif  // #ifndef AVCODEC_RISCV_HEVCDSP_RVV_H

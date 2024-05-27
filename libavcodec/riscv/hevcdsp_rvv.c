@@ -22,6 +22,8 @@
 #if HAVE_RVV
 #include <riscv_vector.h>
 #include "libavutil/common.h"
+#include "libavcodec/bit_depth_template.c"
+#include "libavcodec/hevcdec.h"
 
 static const int8_t transform[32][32] = {
     { 64,  64,  64,  64,  64,  64,  64,  64,  64,  64,  64,  64,  64,  64,  64,  64,
@@ -426,5 +428,164 @@ void ff_hevc_idct_8x8_rvv(int16_t *coeffs, int col_limit)
 // IDCT( 8)
 IDCT(16)
 IDCT(32)
+
+#include <stdio.h>
+#include <time.h>
+
+#define TIME_VAL                        \
+    struct timespec start = {0, 0};     \
+    struct timespec end   = {0, 0};     \
+    static long total;                  \
+    static int count;
+
+#define TIME_START  clock_gettime(CLOCK_MONOTONIC, &start)
+#define TIME_END    clock_gettime(CLOCK_MONOTONIC, &end)
+
+
+static void *MEMCPY_RVV(void *restrict destination,
+                    const void *restrict source, size_t n) {
+    unsigned char *dst = destination;
+    const unsigned char *src = source;
+    // copy data byte by byte
+    for (size_t vl; n > 0; n -= vl, src += vl, dst += vl) {
+        vl = vsetvl_e8m8(n);
+        vuint8m8_t vec_src = vle8_v_u8m8(src, vl);
+        vse8_v_u8m8(dst, vec_src, vl);
+    }
+    return destination;
+}
+
+
+void put_hevc_pel_uni_pixels_rvv(uint8_t *_dst, ptrdiff_t _dststride, uint8_t *_src, ptrdiff_t _srcstride,
+                                 int height, intptr_t mx, intptr_t my, int width)
+{
+    int y;
+    pixel *src          = (pixel *)_src;
+    ptrdiff_t srcstride = _srcstride / sizeof(pixel);
+    pixel *dst          = (pixel *)_dst;
+    ptrdiff_t dststride = _dststride / sizeof(pixel);
+
+    for (y = 0; y < height; y++) {
+        MEMCPY_RVV(dst, src, width * sizeof(pixel));
+        src += srcstride;
+        dst += dststride;
+    }
+}
+
+#define QPEL_FILTER(src, stride)                                               \
+    (filter[0] * src[x - 3 * stride] +                                         \
+     filter[1] * src[x - 2 * stride] +                                         \
+     filter[2] * src[x -     stride] +                                         \
+     filter[3] * src[x             ] +                                         \
+     filter[4] * src[x +     stride] +                                         \
+     filter[5] * src[x + 2 * stride] +                                         \
+     filter[6] * src[x + 3 * stride] +                                         \
+     filter[7] * src[x + 4 * stride])
+
+
+void put_hevc_qpel_uni_hv_rvv(uint8_t *_dst,  ptrdiff_t _dststride,
+                              uint8_t *_src, ptrdiff_t _srcstride,
+                              int height, intptr_t mx, intptr_t my, int width)
+{
+    
+// TIME_VAL;
+// TIME_START;
+
+    int x, y;
+    const int8_t *filter;
+    pixel *src = (pixel*)_src;
+    ptrdiff_t srcstride = _srcstride / sizeof(pixel);
+    pixel *dst          = (pixel *)_dst;
+    ptrdiff_t dststride = _dststride / sizeof(pixel);
+    int16_t tmp_array[(MAX_PB_SIZE + QPEL_EXTRA) * MAX_PB_SIZE];
+    int16_t *tmp = tmp_array;
+    int shift =  6;
+    int offset = 1 << (shift - 1);
+
+    src   -= QPEL_EXTRA_BEFORE * srcstride;
+    filter = ff_hevc_qpel_filters[mx - 1];
+
+    int vl;
+    vint8m1_t vfilter;
+    vuint8m1_t vsrc;
+    vint16m2_t vtmpm2;
+    vint16m1_t vzero, vtmpm1;
+    vl = vsetvl_e16m2(8);
+    vfilter = vle8_v_i8m1(filter, vl);
+    vzero = vmv_s_x_i16m1(vzero, 0, vl);
+
+    for (y = 0; y < height + QPEL_EXTRA; y++) {
+        for (x = 0; x < width; x++) {
+            vsrc = vle8_v_u8m1(&src[x-3], vl);
+            vtmpm2 = vwmulsu_vv_i16m2(vfilter, vsrc, vl);
+            vtmpm1 = vredsum_vs_i16m2_i16m1(vtmpm1, vtmpm2, vzero, vl);
+            tmp[x] = vmv_x_s_i16m1_i16(vtmpm1);
+        }
+        src += srcstride;
+        tmp += MAX_PB_SIZE;
+    }
+
+    tmp    = tmp_array + QPEL_EXTRA_BEFORE * MAX_PB_SIZE;
+    filter = ff_hevc_qpel_filters[my - 1];
+
+
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            dst[x] = av_clip_pixel(((QPEL_FILTER(tmp, MAX_PB_SIZE) >> 6) + offset) >> shift);
+        }
+        tmp += MAX_PB_SIZE;
+        dst += dststride;
+    }
+
+// TIME_END;
+// total += (end.tv_sec - start.tv_sec) * 1000000000UL + end.tv_nsec - start.tv_nsec;
+// count ++;
+// if (count % 1000 == 0) {
+//     printf("count: %5d, TIME: %ldus\n", count, total / 1000);
+// }
+
+}
+
+
+#define EPEL_FILTER(src, stride)                                               \
+    (filter[0] * src[x - stride] +                                             \
+     filter[1] * src[x]          +                                             \
+     filter[2] * src[x + stride] +                                             \
+     filter[3] * src[x + 2 * stride])
+
+void put_hevc_epel_uni_hv_rvv(uint8_t *_dst, ptrdiff_t _dststride, uint8_t *_src, ptrdiff_t _srcstride,
+                              int height, intptr_t mx, intptr_t my, int width)
+{
+    int x, y;
+    pixel *src = (pixel *)_src;
+    ptrdiff_t srcstride = _srcstride / sizeof(pixel);
+    pixel *dst          = (pixel *)_dst;
+    ptrdiff_t dststride = _dststride / sizeof(pixel);
+    const int8_t *filter = ff_hevc_epel_filters[mx - 1];
+    int16_t tmp_array[(MAX_PB_SIZE + EPEL_EXTRA) * MAX_PB_SIZE];
+    int16_t *tmp = tmp_array;
+    int shift = 6;
+    int offset = 1 << (shift - 1);
+
+    src -= EPEL_EXTRA_BEFORE * srcstride;
+
+    for (y = 0; y < height + EPEL_EXTRA; y++) {
+        for (x = 0; x < width; x++)
+            tmp[x] = EPEL_FILTER(src, 1);
+        src += srcstride;
+        tmp += MAX_PB_SIZE;
+    }
+
+    tmp      = tmp_array + EPEL_EXTRA_BEFORE * MAX_PB_SIZE;
+    filter = ff_hevc_epel_filters[my - 1];
+
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++)
+            dst[x] = av_clip_pixel(((EPEL_FILTER(tmp, MAX_PB_SIZE) >> 6) + offset) >> shift);
+        tmp += MAX_PB_SIZE;
+        dst += dststride;
+    }
+}
+
 
 #endif
