@@ -99,31 +99,30 @@ static const int8_t transform[32][32] = {
 #undef BIT_DEPTH
 
 #define TEST_FUNC(H)                                            \
-void ff_hevc_idct_##H##x##H##_test(int16_t *coeffs,             \
-                                   int col_limit);              \
-void ff_hevc_idct_##H##x##H##_test(int16_t *coeffs,             \
-                                   int col_limit)               \
+static void ff_hevc_idct_##H##x##H##_test(int16_t *coeffs,      \
+                                          int col_limit)        \
 {                                                               \
-    struct timespec start = {0, 0};     \
-    struct timespec end = {0, 0};       \
+    struct timespec start = {0, 0};                             \
+    struct timespec end = {0, 0};                               \
                                                                 \
     int16_t coeffs_rvv[H * H];                                  \
     memcpy(coeffs_rvv, coeffs, sizeof(coeffs_rvv));             \
                                                                 \
     idct_##H##x##H##_8(coeffs, col_limit);                      \
-    if (1|H == 4) clock_gettime(CLOCK_MONOTONIC, &start);          \
+    if (1) clock_gettime(CLOCK_MONOTONIC, &start);              \
     ff_hevc_idct_##H##x##H##_rvv(coeffs_rvv, col_limit);        \
-    if (1|H == 4) clock_gettime(CLOCK_MONOTONIC, &end);            \
+    if (1) clock_gettime(CLOCK_MONOTONIC, &end);                \
                                                                 \
-    if (1|H == 4) {                                               \
-        static long total;                                    \
+    if (1) {                                                    \
+        static long total;                                      \
         static int count;                                       \
-        total += (end.tv_sec - start.tv_sec) * 1000000000 + end.tv_nsec - start.tv_nsec;                   \
+        total += (end.tv_sec - start.tv_sec) * 1000000000       \
+                 + end.tv_nsec - start.tv_nsec;                 \
         count ++;                                               \
-        if (count % 1000 == 0 || (H==32 && count % 300 == 0)) {                                \
-            printf("IDCT_%d: %ldus\n", H, total / 1000);            \
+        if (count % 1000 == 0 || (H==32 && count % 300 == 0)) { \
+            printf("IDCT_%d: %ldus\n", H, total / 1000);        \
         }                                                       \
-    }       \
+    }                                                           \
                                                                 \
     if (memcmp(coeffs, coeffs_rvv, sizeof(coeffs_rvv))) {       \
         printf("idct_%dx%d failed\n", H, H);                    \
@@ -145,53 +144,6 @@ TEST_FUNC(32)
 #undef TEST_FUNC
 #endif
 
-#define RVV_TEST_PEL 0
-#if RVV_TEST_PEL
-
-#include <stdio.h>
-#include <time.h>
-
-#define TIME_VAL                        \
-    struct timespec start = {0, 0};     \
-    struct timespec end   = {0, 0};
-
-#define TIME_START  clock_gettime(CLOCK_MONOTONIC, &start)
-#define TIME_END    clock_gettime(CLOCK_MONOTONIC, &end)
-
-static void put_hevc_qpel_uni_h_test(uint8_t *_dst,  ptrdiff_t _dststride,
-                                     uint8_t *_src, ptrdiff_t _srcstride,
-                                     int height, intptr_t mx, intptr_t my, int width)
-{
-    TIME_VAL;                                                   \
-    int8_t _dst_rvv[_dststride * height];                       \
-    memcpy(_dst_rvv, _dst, sizeof(_dst_rvv));                   \
-                                                                \
-    put_hevc_qpel_uni_h_8(_dst, _dststride, _src, _srcstride,   \
-                          height, mx, my, width);               \
-    TIME_START;                                                 \
-    put_hevc_qpel_uni_h_rvv(_dst_rvv, _dststride, _src,         \
-                            _srcstride, height, mx, my, width); \
-    TIME_END;                                                   \
-                                                                \
-    if (1) {                                                    \
-        static long total;                                      \
-        static int count;                                       \
-        total += (end.tv_sec - start.tv_sec) * 1000000000       \
-                 + end.tv_nsec - start.tv_nsec;                 \
-        count ++;                                               \
-        if (count % 1000 == 0 || (H==32 && count % 300 == 0)) { \
-            printf("IDCT_%d: %ldus\n", H, total / 1000);        \
-        }                                                       \
-    }                                                           \
-                                                                \
-    if (memcmp(_dst, _dst_rvv, sizeof(_dst_rvv))) {             \
-        printf("put_hevc_qpel_uni_h_test failed\n");            \
-        exit(1);                                                \
-    }                                                           \
-}
-
-#endif
-
 void ff_hevc_dsp_init_riscv(HEVCDSPContext *c, const int bit_depth)
 {
 #if HAVE_RVV
@@ -199,6 +151,14 @@ void ff_hevc_dsp_init_riscv(HEVCDSPContext *c, const int bit_depth)
 
     if (cpu_flags & AV_CPU_FLAG_RVI) {
         if (bit_depth == 8) {
+
+#undef PEL_FUNC
+#define PEL_FUNC(dst1, idx1, idx2, a)                      \
+    for(int i = 0 ; i < 10 ; i++)                          \
+{                                                          \
+    c->dst1[i][idx1][idx2] = a;                            \
+}
+
 #if RVV_TEST_IDCT
             c->idct[0] = ff_hevc_idct_4x4_test;
             c->idct[1] = ff_hevc_idct_8x8_test;
@@ -211,34 +171,10 @@ void ff_hevc_dsp_init_riscv(HEVCDSPContext *c, const int bit_depth)
             c->idct[3] = ff_hevc_idct_32x32_rvv;
 #endif
 
-#undef PEL_FUNC
-#define PEL_FUNC(dst1, idx1, idx2, a)                            \
-    for(int i = 0 ; i < 10 ; i++)                                    \
-{                                                                \
-    c->dst1[i][idx1][idx2] = a;                            \
-}
-
-#if RVV_TEST_PEL
-            // PEL_FUNC(put_hevc_qpel_uni, 0, 0, put_hevc_pel_uni_pixels_test);
-            PEL_FUNC(put_hevc_qpel_uni, 0, 1, put_hevc_qpel_uni_h_test);
-            // PEL_FUNC(put_hevc_qpel_uni, 1, 0, put_hevc_qpel_uni_v);
-            // PEL_FUNC(put_hevc_qpel_uni, 1, 1, put_hevc_qpel_uni_hv);
-            // PEL_FUNC(put_hevc_qpel_uni_w, 0, 0, put_hevc_pel_uni_w_pixels);
-            // PEL_FUNC(put_hevc_qpel_uni_w, 0, 1, put_hevc_qpel_uni_w_h);
-            // PEL_FUNC(put_hevc_qpel_uni_w, 1, 0, put_hevc_qpel_uni_w_v);
-            // PEL_FUNC(put_hevc_qpel_uni_w, 1, 1, put_hevc_qpel_uni_w_hv);
-#else
             PEL_FUNC(put_hevc_qpel_uni, 0, 0, put_hevc_pel_uni_pixels_rvv);
-            // PEL_FUNC(put_hevc_qpel_uni, 0, 1, put_hevc_qpel_uni_h_rvv);
-            // PEL_FUNC(put_hevc_qpel_uni, 1, 0, put_hevc_qpel_uni_v);
             PEL_FUNC(put_hevc_qpel_uni, 1, 1, put_hevc_qpel_uni_hv_rvv);
 
             PEL_FUNC(put_hevc_epel_uni, 0, 0, put_hevc_pel_uni_pixels_rvv);
-            // PEL_FUNC(put_hevc_epel_uni, 0, 1, put_hevc_epel_uni_h, depth);
-            // PEL_FUNC(put_hevc_epel_uni, 1, 0, put_hevc_epel_uni_v, depth);
-            // PEL_FUNC(put_hevc_epel_uni, 1, 1, put_hevc_epel_uni_hv, depth);
-#endif
-
 
         }
     }

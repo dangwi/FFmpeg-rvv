@@ -109,27 +109,8 @@ static const int16_t trans4x4odd[16] = {
     18, -50,  75, -89
 };
 
-/*
-#define TR_4(dst, src, dstep, sstep, assign, end)                 \
-    do {                                                          \
-        int vl;                                                   \
-        vint16m1_t vcoe16;                                        \
-        vint32m2_t vo32;                                          \
-        vl = vsetvl_e16m1(4);                                     \
-        vo32 = vmv_v_x_i32m2(0, vl);                              \
-        vcoe16 = vle16_v_i16m1(&trans4x4[0], vl);                 \
-        vo32 = vwmacc_vx_i32m2(vo32, src[0 * sstep], vcoe16, vl);         \
-        vcoe16 = vle16_v_i16m1(&trans4x4[4], vl);                 \
-        vo32 = vwmacc_vx_i32m2(vo32, src[1 * sstep], vcoe16, vl);         \
-        vcoe16 = vle16_v_i16m1(&trans4x4[8], vl);                 \
-        vo32 = vwmacc_vx_i32m2(vo32, src[2 * sstep], vcoe16, vl);         \
-        vcoe16 = vle16_v_i16m1(&trans4x4[12], vl);                \
-        vo32 = vwmacc_vx_i32m2(vo32, src[3 * sstep], vcoe16, vl);         \
-        vse32_v_i32m2(&dst[0], vo32, vl);                         \
-    } while (0)
-*/
 
-#define TR_8_bak(dst, src, dstep, sstep, assign, end)                 \
+#define TR_8_bak(dst, src, dstep, sstep, assign, end)             \
     do {                                                          \
         int i, j;                                                 \
         int e_8[4];                                               \
@@ -169,7 +150,7 @@ static const int16_t trans4x4odd[16] = {
 
 #define TR_8(dst, src, dstep, sstep, assign, end)                 \
     do {                                                          \
-        int i, j;                                                 \
+        int i;                                                    \
         int e_8[4];                                               \
         int o_8[4];                                               \
         int vl;                                                   \
@@ -340,43 +321,6 @@ void ff_hevc_idct_4x4_rvv(int16_t *coeffs, int col_limit)
     vsse16_v_i16m1(&coeffs[2], 2 * 4, vo16, vl);
     vo16   = vnclip_wx_i16m1(vo32v3, 12, vl);
     vsse16_v_i16m1(&coeffs[3], 2 * 4, vo16, vl);
-
-/*
-    int vl;
-    vint16m1_t vrow16;
-    vint32m2_t vo32v0, vo32v1, vo32v2, vo32v3;
-    vint16m1_t vo16;
-
-    vl = vsetvl_e16m1(4);
-    vo32v0 = vmv_v_x_i32m2(0, vl);
-    vo32v1 = vmv_v_x_i32m2(0, vl);
-    vo32v2 = vmv_v_x_i32m2(0, vl);
-    vo32v3 = vmv_v_x_i32m2(0, vl);
-
-#define MACC1x4(line)                                                \
-    vrow16 = vle16_v_i16m1(&src[line * 4], vl);                   \
-    vo32v0 = vwmacc_vx_i32m2(vo32v0, trans4x4[line * 4 + 0], vrow16, vl); \
-    vo32v1 = vwmacc_vx_i32m2(vo32v1, trans4x4[line * 4 + 1], vrow16, vl); \
-    vo32v2 = vwmacc_vx_i32m2(vo32v2, trans4x4[line * 4 + 2], vrow16, vl); \
-    vo32v3 = vwmacc_vx_i32m2(vo32v3, trans4x4[line * 4 + 3], vrow16, vl);
-
-    MACC1x4(0)
-    MACC1x4(1)
-    MACC1x4(2)
-    MACC1x4(3)
-
-    vo16   = vnclip_wx_i16m1(vo32v0, 7, vl);
-    vse16_v_i16m1(&src[0], vo16, vl);
-
-    vo16   = vnclip_wx_i16m1(vo32v1, 7, vl);
-    vse16_v_i16m1(&src[4], vo16, vl);
-
-    vo16   = vnclip_wx_i16m1(vo32v2, 7, vl);
-    vse16_v_i16m1(&src[8], vo16, vl);
-
-    vo16   = vnclip_wx_i16m1(vo32v3, 7, vl);
-    vse16_v_i16m1(&src[12], vo16, vl);
-*/
 }
 
 void ff_hevc_idct_8x8_rvv(int16_t *coeffs, int col_limit)
@@ -403,44 +347,8 @@ void ff_hevc_idct_8x8_rvv(int16_t *coeffs, int col_limit)
     }
 }
 
-/*
-    int i;
-    int      shift = 7;
-    int      add   = 1 << (shift - 1);
-    int16_t *src   = coeffs;
-    IDCT_VAR##H(H);
-
-    for (i = 0; i < H; i++) {
-        TR_ ## H(src, src, H, H, SCALE, limit2);
-        if (limit2 < H && i%4 == 0 && !!i)
-            limit2 -= 4;
-        src++;
-    }
-
-    shift = 12;
-    add   = 1 << (shift - 1);
-    for (i = 0; i < H; i++) {
-        TR_ ## H(coeffs, coeffs, 1, 1, SCALE, limit);
-        coeffs += H;
-    }
-*/
-
-// IDCT( 8)
 IDCT(16)
 IDCT(32)
-
-#include <stdio.h>
-#include <time.h>
-
-#define TIME_VAL                        \
-    struct timespec start = {0, 0};     \
-    struct timespec end   = {0, 0};     \
-    static long total;                  \
-    static int count;
-
-#define TIME_START  clock_gettime(CLOCK_MONOTONIC, &start)
-#define TIME_END    clock_gettime(CLOCK_MONOTONIC, &end)
-
 
 static void *MEMCPY_RVV(void *restrict destination,
                     const void *restrict source, size_t n) {
@@ -487,10 +395,6 @@ void put_hevc_qpel_uni_hv_rvv(uint8_t *_dst,  ptrdiff_t _dststride,
                               uint8_t *_src, ptrdiff_t _srcstride,
                               int height, intptr_t mx, intptr_t my, int width)
 {
-    
-// TIME_VAL;
-// TIME_START;
-
     int x, y;
     const int8_t *filter;
     pixel *src = (pixel*)_src;
@@ -512,7 +416,7 @@ void put_hevc_qpel_uni_hv_rvv(uint8_t *_dst,  ptrdiff_t _dststride,
     vint16m1_t vzero, vtmpm1;
     vl = vsetvl_e16m2(8);
     vfilter = vle8_v_i8m1(filter, vl);
-    vzero = vmv_s_x_i16m1(vzero, 0, vl);
+    vzero = vmv_s_x_i16m1(vzero, 0, 1);
 
     for (y = 0; y < height + QPEL_EXTRA; y++) {
         for (x = 0; x < width; x++) {
@@ -537,16 +441,9 @@ void put_hevc_qpel_uni_hv_rvv(uint8_t *_dst,  ptrdiff_t _dststride,
         dst += dststride;
     }
 
-// TIME_END;
-// total += (end.tv_sec - start.tv_sec) * 1000000000UL + end.tv_nsec - start.tv_nsec;
-// count ++;
-// if (count % 1000 == 0) {
-//     printf("count: %5d, TIME: %ldus\n", count, total / 1000);
-// }
-
 }
 
-
+/*
 #define EPEL_FILTER(src, stride)                                               \
     (filter[0] * src[x - stride] +                                             \
      filter[1] * src[x]          +                                             \
@@ -586,6 +483,6 @@ void put_hevc_epel_uni_hv_rvv(uint8_t *_dst, ptrdiff_t _dststride, uint8_t *_src
         dst += dststride;
     }
 }
-
+*/
 
 #endif

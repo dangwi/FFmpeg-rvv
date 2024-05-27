@@ -35,8 +35,5 @@ void put_hevc_pel_uni_pixels_rvv(uint8_t *_dst, ptrdiff_t _dststride,
 void put_hevc_qpel_uni_hv_rvv(uint8_t *_dst,  ptrdiff_t _dststride,
                               uint8_t *_src, ptrdiff_t _srcstride,
                               int height, intptr_t mx, intptr_t my, int width);
-void put_hevc_epel_uni_hv_rvv(uint8_t *_dst, ptrdiff_t _dststride, 
-                              uint8_t *_src, ptrdiff_t _srcstride,
-                              int height, intptr_t mx, intptr_t my, int width);
 
 #endif  // #ifndef AVCODEC_RISCV_HEVCDSP_RVV_H
